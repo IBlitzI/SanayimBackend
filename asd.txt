@@ -1,0 +1,4 @@
+mongoose connect kısmını db altına taşı //
+userdan başlayarak controllerları dene 
+modellerden gereksizde chat kısmını kaldır ona sonra bakarsın //
+bi base response oluşturabilirsin
