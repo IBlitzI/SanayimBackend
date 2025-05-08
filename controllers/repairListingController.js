@@ -98,13 +98,13 @@ exports.createListing = [
 
 exports.getListings = async (req, res) => {
   try {
-    const { status, location } = req.query;
-    const query = {};
+    const { location } = req.body;
     
-    if (status) query.status = status;
-    if (location) query.location = location;
+    if (!location) {
+      return res.status(400).json({ message: 'Location is required' });
+    }
 
-    const listings = await RepairListing.find(query)
+    const listings = await RepairListing.find({ location })
       .sort({ createdAt: -1 })
       .populate('ownerId', 'fullName profileImage');
       

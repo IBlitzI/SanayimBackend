@@ -43,11 +43,6 @@ const chatSchema = new mongoose.Schema({
     of: Number,
     default: new Map()
   },
-  repairListingId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'RepairListing',
-    required: true
-  },
   status: {
     type: String,
     enum: ['active', 'archived'],

@@ -1,5 +1,6 @@
 const Chat = require('../models/Chat');
 const User = require('../models/User');
+const RepairListing = require('../models/RepairListing');
 
 exports.getChatHistory = async (userId) => {
   try {
@@ -47,38 +48,60 @@ exports.createNewChat = async (participants, repairListingId) => {
 // Yeni bir sohbet başlat
 exports.createChat = async (req, res) => {
   try {
-    const { participantId, repairListingId } = req.body;
+    const { mechanicId } = req.body;
     const currentUserId = req.user.id;
 
-    // Validate participant exists
-    const participant = await User.findById(participantId);
-    if (!participant) {
-      return res.status(404).json({ message: 'Participant not found' });
+    if (!mechanicId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tamirci ID\'si gereklidir'
+      });
+    }
+
+    // Check if mechanic exists and is actually a mechanic
+    const mechanic = await User.findOne({ _id: mechanicId, userType: 'mechanic' });
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tamirci bulunamadı'
+      });
     }
 
     // Check for existing chat
     const existingChat = await Chat.findOne({
-      participants: { $all: [currentUserId, participantId] },
-      repairListingId: repairListingId
+      participants: { $all: [currentUserId, mechanicId] }
     });
 
     if (existingChat) {
-      await existingChat.populate('participants', 'fullName profileImage');
-      return res.status(200).json(existingChat);
+      await existingChat.populate('participants', 'fullName profileImage location userType');
+      
+      return res.status(200).json({
+        success: true,
+        data: existingChat
+      });
     }
 
     const newChat = await Chat.create({
-      participants: [currentUserId, participantId],
-      repairListingId,
+      participants: [currentUserId, mechanicId],
       messages: [],
-      unreadCounts: new Map([[participantId, 0], [currentUserId, 0]])
+      unreadCounts: new Map([
+        [currentUserId.toString(), 0],
+        [mechanicId.toString(), 0]
+      ])
     });
 
-    await newChat.populate('participants', 'fullName profileImage');
+    await newChat.populate('participants', 'fullName profileImage location userType');
 
-    res.status(201).json(newChat);
+    res.status(201).json({
+      success: true,
+      data: newChat
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Sohbet oluşturma hatası:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Sohbet oluşturulurken bir hata oluştu' 
+    });
   }
 };
 
@@ -91,24 +114,40 @@ exports.getUserChats = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const chats = await Chat.find({ participants: userId })
-      .populate('participants', 'fullName profileImage')
-      .populate('repairListingId', 'description images location')
-      .sort({ lastMessage: -1 })
+      .populate('participants', 'fullName profileImage location userType')
+      .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit);
 
     const total = await Chat.countDocuments({ participants: userId });
 
+    // Format each chat to include last message and unread count
+    const formattedChats = chats.map(chat => ({
+      ...chat.toObject(),
+      lastMessage: chat.messages[chat.messages.length - 1] || null,
+      unreadCount: chat.unreadCounts.get(userId.toString()) || 0,
+      otherParticipant: chat.participants.find(p => p._id.toString() !== userId)
+    }));
+
     res.json({
-      chats,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalChats: total
+      success: true,
+      data: {
+        chats: formattedChats,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalChats: total,
+          hasNextPage: page < Math.ceil(total / limit),
+          hasPreviousPage: page > 1
+        }
       }
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Get user chats error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
@@ -153,6 +192,43 @@ exports.getUnreadCount = async (req, res) => {
     res.json({ unreadCount: totalUnread });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// Mark all messages in a chat as read
+exports.markChatAsRead = async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const userId = req.user.id;
+
+    const chat = await Chat.findById(chatId);
+    if (!chat) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chat not found'
+      });
+    }
+
+    if (!chat.participants.some(p => p._id.toString() === userId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not a participant in this chat'
+      });
+    }
+
+    // Set unread count to 0 for current user
+    chat.unreadCounts.set(userId.toString(), 0);
+    await chat.save();
+
+    res.json({
+      success: true,
+      message: 'Chat marked as read'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
   }
 };
 

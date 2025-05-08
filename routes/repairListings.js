@@ -12,7 +12,7 @@ const {
 } = require('../controllers/repairListingController');
 
 // Get all listings with optional status and location filters
-router.get('/', protect, getListings);
+router.post('/get-listings', protect, getListings);
 
 // Get logged-in user's repair listings
 router.get('/me', protect, getUserListings);

@@ -8,7 +8,8 @@ const {
   getUnreadCount,
   updateMessage,
   deleteMessage,
-  sendMessage
+  sendMessage,
+  markChatAsRead
 } = require('../controllers/chatController');
 
 // Create a new chat
@@ -22,6 +23,9 @@ router.get('/:chatId/messages', protect, getChatMessages);
 
 // Get total unread messages count
 router.get('/unread', protect, getUnreadCount);
+
+// Mark chat as read
+router.post('/:chatId/read', protect, markChatAsRead);
 
 // Send a new message
 router.post('/messages', protect, sendMessage);
