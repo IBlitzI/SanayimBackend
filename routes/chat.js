@@ -9,7 +9,8 @@ const {
   updateMessage,
   deleteMessage,
   sendMessage,
-  markChatAsRead
+  markChatAsRead,
+  findChatByMechanicId
 } = require('../controllers/chatController');
 
 // Create a new chat
@@ -35,5 +36,8 @@ router.put('/:chatId/messages/:messageId', protect, updateMessage);
 
 // Delete a message
 router.delete('/:chatId/messages/:messageId', protect, deleteMessage);
+
+// Find or create a chat by mechanic ID
+router.post('/find-by-user', protect, findChatByMechanicId);
 
 module.exports = router;

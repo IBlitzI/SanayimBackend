@@ -124,15 +124,29 @@ exports.submitBid = async (req, res) => {
       return res.status(403).json({ message: 'Only mechanics can submit bids' });
     }
 
-    const newBid = {
-      mechanicId: req.user._id,
-      mechanicName: req.user.fullName,
-      amount,
-      estimatedTime,
-      message
-    };
+    // Check if the mechanic has already submitted a bid
+    const existingBidIndex = listing.bids.findIndex(bid => 
+      bid.mechanicId.toString() === req.user._id.toString()
+    );
 
-    listing.bids.push(newBid);
+    if (existingBidIndex !== -1) {
+      // Update existing bid
+      listing.bids[existingBidIndex].amount = amount;
+      listing.bids[existingBidIndex].estimatedTime = estimatedTime;
+      listing.bids[existingBidIndex].message = message;
+      listing.bids[existingBidIndex].createdAt = Date.now(); // Update timestamp
+    } else {
+      // Create new bid
+      const newBid = {
+        mechanicId: req.user._id,
+        mechanicName: req.user.fullName,
+        amount,
+        estimatedTime,
+        message
+      };
+      listing.bids.push(newBid);
+    }
+
     await listing.save();
     res.json(listing);
   } catch (error) {
@@ -142,14 +156,26 @@ exports.submitBid = async (req, res) => {
 
 exports.selectBid = async (req, res) => {
   try {
-    const listing = await RepairListing.findById(req.params.listingId);
+    const { listingId, bidId } = req.body;
+    
+    if (!listingId || !bidId) {
+      return res.status(400).json({ message: 'Both listingId and bidId are required' });
+    }
+    
+    const listing = await RepairListing.findById(listingId);
     if (!listing) return res.status(404).json({ message: 'Listing not found' });
 
     if (listing.ownerId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    listing.selectedBidId = req.params.bidId;
+    // Verify that the bid exists
+    const bidExists = listing.bids.some(bid => bid._id.toString() === bidId);
+    if (!bidExists) {
+      return res.status(404).json({ message: 'Bid not found in this listing' });
+    }
+
+    listing.selectedBidId = bidId;
     listing.status = 'assigned';
     await listing.save();
 

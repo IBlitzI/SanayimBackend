@@ -27,7 +27,7 @@ router.post('/', protect, authorize('vehicle_owner'), createListing);
 router.post('/:id/bids', protect, authorize('mechanic'), submitBid);
 
 // Select a winning bid
-router.post('/:listingId/select-bid/:bidId', protect, authorize('vehicle_owner'), selectBid);
+router.post('/select-bid', protect, authorize('vehicle_owner'), selectBid);
 
 // Get mechanics by location (only for vehicle owners)
 router.post('/mechanics', protect, authorize('vehicle_owner'), getMechanicsByLocation);

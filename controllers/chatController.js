@@ -339,3 +339,65 @@ exports.sendMessage = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// Find a chat between the current user and a mechanic, or create a new one if it doesn't exist
+exports.findChatByMechanicId = async (req, res) => {
+  try {
+    const { otherUserId } = req.body;
+    const currentUserId = req.user._id;
+
+    if (!otherUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Diğer kullanıcının ID\'si gereklidir'
+      });
+    }
+
+    // Check if the other user exists
+    const otherUser = await User.findById(otherUserId);
+    if (!otherUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'Kullanıcı bulunamadı'
+      });
+    }
+
+    // Check for existing chat between the two users
+    const existingChat = await Chat.findOne({
+      participants: { $all: [currentUserId, otherUserId] }
+    });
+
+    if (existingChat) {
+      // Chat exists, populate participant details and return it
+      await existingChat.populate('participants', 'fullName profileImage location userType');
+      
+      return res.status(200).json({
+        success: true,
+        data: existingChat
+      });
+    }
+
+    // No existing chat, create a new one
+    const newChat = await Chat.create({
+      participants: [currentUserId, otherUserId],
+      messages: [],
+      unreadCounts: new Map([
+        [currentUserId.toString(), 0],
+        [otherUserId.toString(), 0]
+      ])
+    });
+
+    await newChat.populate('participants', 'fullName profileImage location userType');
+
+    res.status(201).json({
+      success: true,
+      data: newChat
+    });
+  } catch (error) {
+    console.error('Chat işlemi hatası:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
