@@ -30,4 +30,7 @@ router.get('/profile', protect, userController.getProfile);
 // Update profile route now handles multipart/form-data
 router.put('/profile', protect, userController.updateProfile);
 
+// Update push token
+router.post('/push-token', protect, userController.updatePushToken);
+
 module.exports = router;

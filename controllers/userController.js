@@ -207,3 +207,46 @@ exports.logout = async (req, res) => {
     });
   }
 };
+
+// Update push token
+exports.updatePushToken = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { expoPushToken } = req.body;
+
+    if (!expoPushToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Expo push token gereklidir'
+      });
+    }
+
+    // Update the user's push token
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { expoPushToken },
+      { new: true, select: '-password' }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'Kullanıcı bulunamadı'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Push token başarıyla güncellendi',
+      data: {
+        user: updatedUser
+      }
+    });
+  } catch (error) {
+    console.error('Push token güncelleme hatası:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+};

@@ -94,10 +94,13 @@ const userSchema = new mongoose.Schema({
   reviewCount: {
     type: Number,
     default: 0
-  },
-  createdAt: {
+  },  createdAt: {
     type: Date,
     default: Date.now
+  },
+  expoPushToken: {
+    type: String,
+    default: null
   },
   updatedAt: {
     type: Date,

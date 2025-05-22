@@ -2,6 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const User = require('../models/User');
+const { sendBidNotification } = require('../utils/notificationService');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -39,7 +40,7 @@ exports.createListing = [
     try {
       const { description, location } = req.body;
       const files = req.files;
-      
+
       if (!description || !location || !files || files.length === 0) {
         // Clean up any uploaded files if validation fails
         if (files) {
@@ -49,7 +50,7 @@ exports.createListing = [
             });
           });
         }
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: 'Please provide description, location, and at least one image or video file'
         });
       }
@@ -58,12 +59,12 @@ exports.createListing = [
       const mediaFiles = await Promise.all(files.map(async (file) => {
         const fileBuffer = fs.readFileSync(file.path);
         const base64File = `data:${file.mimetype};base64,${fileBuffer.toString('base64')}`;
-        
+
         // Clean up the file after converting to base64
         fs.unlink(file.path, (err) => {
           if (err) console.error('Error deleting file:', err);
         });
-        
+
         return {
           data: base64File,
           type: file.mimetype.startsWith('image/') ? 'image' : 'video'
@@ -99,7 +100,7 @@ exports.createListing = [
 exports.getListings = async (req, res) => {
   try {
     const { location } = req.body;
-    
+
     if (!location) {
       return res.status(400).json({ message: 'Location is required' });
     }
@@ -107,7 +108,7 @@ exports.getListings = async (req, res) => {
     const listings = await RepairListing.find({ location })
       .sort({ createdAt: -1 })
       .populate('ownerId', 'fullName profileImage');
-      
+
     res.json(listings);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -118,18 +119,26 @@ exports.submitBid = async (req, res) => {
   try {
     const { amount, estimatedTime, message } = req.body;
     const listing = await RepairListing.findById(req.params.id);
-    
+
     if (!listing) return res.status(404).json({ message: 'Listing not found' });
     if (req.user.userType !== 'mechanic') {
       return res.status(403).json({ message: 'Only mechanics can submit bids' });
     }
 
+    // İlan sahibini bul
+    const owner = await User.findById(listing.ownerId);
+    if (!owner) {
+      return res.status(404).json({ message: 'İlan sahibi bulunamadı' });
+    }
+
     // Check if the mechanic has already submitted a bid
-    const existingBidIndex = listing.bids.findIndex(bid => 
+    const existingBidIndex = listing.bids.findIndex(bid =>
       bid.mechanicId.toString() === req.user._id.toString()
     );
 
-    if (existingBidIndex !== -1) {
+    const isNewBid = existingBidIndex === -1;
+
+    if (!isNewBid) {
       // Update existing bid
       listing.bids[existingBidIndex].amount = amount;
       listing.bids[existingBidIndex].estimatedTime = estimatedTime;
@@ -148,6 +157,16 @@ exports.submitBid = async (req, res) => {
     }
 
     await listing.save();
+
+
+    await sendBidNotification(
+      owner._id,
+      req.user.fullName,
+      listing._id,
+      amount
+    );
+
+
     res.json(listing);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -157,11 +176,11 @@ exports.submitBid = async (req, res) => {
 exports.selectBid = async (req, res) => {
   try {
     const { listingId, bidId } = req.body;
-    
+
     if (!listingId || !bidId) {
       return res.status(400).json({ message: 'Both listingId and bidId are required' });
     }
-    
+
     const listing = await RepairListing.findById(listingId);
     if (!listing) return res.status(404).json({ message: 'Listing not found' });
 
@@ -188,7 +207,7 @@ exports.selectBid = async (req, res) => {
 exports.getMechanicsByLocation = async (req, res) => {
   try {
     const { location } = req.body;
-    
+
     if (!location) {
       return res.status(400).json({ message: 'Location is required' });
     }
@@ -208,9 +227,9 @@ exports.getMechanicsByLocation = async (req, res) => {
       data: mechanics
     });
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: error.message 
+      message: error.message
     });
   }
 };
@@ -220,15 +239,15 @@ exports.getUserListings = async (req, res) => {
     const listings = await RepairListing.find({ ownerId: req.user._id })
       .sort({ createdAt: -1 })
       .populate('ownerId', 'fullName profileImage');
-      
+
     res.json({
       success: true,
       data: listings
     });
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: error.message 
+      message: error.message
     });
   }
 };
@@ -238,7 +257,7 @@ exports.getListingById = async (req, res) => {
     const listing = await RepairListing.findById(req.params.id)
       .populate('ownerId', 'fullName profileImage')
       .populate('bids.mechanicId', 'fullName profileImage location specialties');
-    
+
     if (!listing) {
       return res.status(404).json({
         success: false,
@@ -248,6 +267,121 @@ exports.getListingById = async (req, res) => {
 
     res.json({
       success: true,
+      data: listing
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+exports.getMechanicBids = async (req, res) => {
+  try {
+    // Ensure user is a mechanic
+    if (req.user.userType !== 'mechanic') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only mechanics can access their bid listings'
+      });
+    }
+
+    // Find listings where the mechanic has submitted bids
+    // Using $elemMatch to find documents where the bids array contains at least
+    // one element with mechanicId matching the current user's ID
+    const listings = await RepairListing.find({
+      'bids.mechanicId': req.user._id
+    })
+      .sort({ createdAt: -1 })
+      .populate('ownerId', 'fullName profileImage');
+
+    // Extract bid status information
+    const listingsWithBidStatus = listings.map(listing => {
+      const mechanicBid = listing.bids.find(
+        bid => bid.mechanicId.toString() === req.user._id.toString()
+      );
+
+      // Check if this bid was selected
+      const isSelected = listing.selectedBidId &&
+        listing.selectedBidId.toString() === mechanicBid._id.toString();
+
+      // Return listing with additional bid status information
+      return {
+        ...listing.toObject(),
+        mechanicBid,
+        bidStatus: isSelected ? 'selected' : 'pending',
+        isSelected
+      };
+    });
+
+    res.json({
+      success: true,
+      data: listingsWithBidStatus
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+exports.completeListing = async (req, res) => {
+  try {
+    const { listingId } = req.body;
+
+    if (!listingId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Listing ID is required'
+      });
+    }
+
+    // Find the repair listing
+    const listing = await RepairListing.findById(listingId);
+    if (!listing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Repair listing not found'
+      });
+    }
+
+    // Make sure the listing status is 'assigned'
+    if (listing.status !== 'assigned') {
+      return res.status(400).json({
+        success: false,
+        message: 'Repair listing must be in "assigned" status to be completed'
+      });
+    }
+
+    // Ensure the mechanic making the request is the one with the selected bid
+    const selectedBid = listing.bids.find(bid =>
+      bid._id.toString() === listing.selectedBidId.toString()
+    );
+
+    if (!selectedBid) {
+      return res.status(404).json({
+        success: false,
+        message: 'Selected bid not found'
+      });
+    }
+
+    // Verify that the current user (mechanic) is the one with the selected bid
+    if (selectedBid.mechanicId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized. Only the mechanic with the selected bid can complete this repair'
+      });
+    }
+
+    // Update the status to completed
+    listing.status = 'completed';
+    await listing.save();
+
+    res.json({
+      success: true,
+      message: 'Repair listing has been marked as completed',
       data: listing
     });
   } catch (error) {

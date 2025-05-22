@@ -1,14 +1,15 @@
 const Chat = require('../models/Chat');
 const User = require('../models/User');
 const RepairListing = require('../models/RepairListing');
+const { sendMessageNotification } = require('../utils/notificationService');
 
 exports.getChatHistory = async (userId) => {
   try {
     return await Chat.find({
       participants: userId
     })
-    .sort({ updatedAt: -1 })
-    .populate('participants', 'fullName profileImage');
+      .sort({ updatedAt: -1 })
+      .populate('participants', 'fullName profileImage');
   } catch (error) {
     console.error('Error getting chat history:', error);
     return [];
@@ -59,11 +60,11 @@ exports.createChat = async (req, res) => {
     }
 
     // Check if mechanic exists and is actually a mechanic
-    const mechanic = await User.findOne({ _id: mechanicId, userType: 'mechanic' });
+    const mechanic = await User.findOne({ _id: mechanicId });
     if (!mechanic) {
       return res.status(404).json({
         success: false,
-        message: 'Tamirci bulunamadı'
+        message: 'Kullanıcı bulunamadı'
       });
     }
 
@@ -74,7 +75,7 @@ exports.createChat = async (req, res) => {
 
     if (existingChat) {
       await existingChat.populate('participants', 'fullName profileImage location userType');
-      
+
       return res.status(200).json({
         success: true,
         data: existingChat
@@ -98,9 +99,9 @@ exports.createChat = async (req, res) => {
     });
   } catch (error) {
     console.error('Sohbet oluşturma hatası:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Sohbet oluşturulurken bir hata oluştu' 
+    res.status(500).json({
+      success: false,
+      message: 'Sohbet oluşturulurken bir hata oluştu'
     });
   }
 };
@@ -144,9 +145,9 @@ exports.getUserChats = async (req, res) => {
     });
   } catch (error) {
     console.error('Get user chats error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
@@ -184,7 +185,7 @@ exports.getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
     const chats = await Chat.find({ participants: userId });
-    
+
     const totalUnread = chats.reduce((total, chat) => {
       return total + (chat.unreadCounts.get(userId.toString()) || 0);
     }, 0);
@@ -195,39 +196,59 @@ exports.getUnreadCount = async (req, res) => {
   }
 };
 
-// Mark all messages in a chat as read
-exports.markChatAsRead = async (req, res) => {
+// Ortak kullanılabilecek mesajı okundu işaretleme fonksiyonu
+exports.processMarkAsRead = async (chatId, userId) => {
   try {
-    const { chatId } = req.params;
-    const userId = req.user.id;
-
     const chat = await Chat.findById(chatId);
     if (!chat) {
-      return res.status(404).json({
-        success: false,
-        message: 'Chat not found'
-      });
+      return { success: false, error: 'Chat not found' };
     }
 
-    if (!chat.participants.some(p => p._id.toString() === userId)) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not a participant in this chat'
-      });
+    if (!chat.participants.some(p => p.toString() === userId)) {
+      return { success: false, error: 'User is not a participant in this chat' };
     }
 
     // Set unread count to 0 for current user
     chat.unreadCounts.set(userId.toString(), 0);
     await chat.save();
 
+    return { success: true, chat };
+  } catch (error) {
+    console.error('Mark as read processing error:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Mark all messages in a chat as read - HTTP endpoint
+exports.markChatAsRead = async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const userId = req.user.id;
+
+    const result = await this.processMarkAsRead(chatId, userId);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.error
+      });
+    }
+
+    // Socket.IO olayını global olarak tetikle
+    const io = req.app.get('io');
+    if (io) {
+      io.to(chatId).emit('messages read', { chatId, userId });
+    }
+
     res.json({
       success: true,
+      unreadCount: chat.unreadCounts.get(userId.toString()) || 0,
       message: 'Chat marked as read'
     });
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: error.message 
+      message: error.message
     });
   }
 };
@@ -292,26 +313,28 @@ exports.deleteMessage = async (req, res) => {
   }
 };
 
-// Yeni mesaj gönderme
-exports.sendMessage = async (req, res) => {
+// Yeni mesaj işleme yardımcı fonksiyonu - HTTP ve Socket.IO tarafından ortak kullanılabilir
+exports.processNewMessage = async (chatId, senderId, content) => {
   try {
-    const { chatId } = req.body;
-    const { content } = req.body;
-    const userId = req.user.id;
-
     const chat = await Chat.findById(chatId);
     if (!chat) {
-      return res.status(404).json({ message: 'Chat not found' });
+      return { success: false, error: 'Chat not found' };
     }
 
     // Kullanıcının bu sohbete katılımcı olup olmadığını kontrol et
-    if (!chat.participants.includes(userId)) {
-      return res.status(403).json({ message: 'You are not a participant in this chat' });
+    if (!chat.participants.includes(senderId)) {
+      return { success: false, error: 'User is not a participant in this chat' };
+    }
+
+    // Gönderen kullanıcıyı bul
+    const sender = await User.findById(senderId);
+    if (!sender) {
+      return { success: false, error: 'Sender not found' };
     }
 
     // Yeni mesajı oluştur
     const newMessage = {
-      senderId: userId,
+      senderId,
       content,
       timestamp: new Date(),
       read: false
@@ -320,20 +343,58 @@ exports.sendMessage = async (req, res) => {
     // Mesajı sohbete ekle
     chat.messages.push(newMessage);
 
-    // Diğer katılımcıların okunmamış mesaj sayısını güncelle
-    chat.participants.forEach(participantId => {
-      if (participantId.toString() !== userId) {
+    // Diğer katılımcıların okunmamış mesaj sayısını güncelle ve bildirim gönder
+    for (const participantId of chat.participants) {
+      if (participantId.toString() !== senderId) {
+        // Okunmamış mesaj sayısını güncelle
         const currentCount = chat.unreadCounts.get(participantId.toString()) || 0;
         chat.unreadCounts.set(participantId.toString(), currentCount + 1);
+
+        // Push bildirim gönder
+        await sendMessageNotification(
+          participantId,
+          sender.fullName,
+          content,
+          chatId
+        );
       }
-    });
+    }
 
     await chat.save();
+    return { success: true, chat, newMessage };
+  } catch (error) {
+    console.error('Message processing error:', error);
+    return { success: false, error: error.message };
+  }
+};
 
-    // Mesaj socket.io ile gönderileceği için burada sadece başarı mesajı dönüyoruz
+// Yeni mesaj gönderme - HTTP endpoint
+exports.sendMessage = async (req, res) => {
+  try {
+    const { chatId, content } = req.body;
+    const userId = req.user.id;
+
+    const result = await this.processNewMessage(chatId, userId, content);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.error
+      });
+    }
+
+    // Socket.IO olayını global olarak tetikle
+    const io = req.app.get('io');
+    if (io) {
+      io.to(chatId).emit('message received', {
+        chatId,
+        message: result.chat.messages[result.chat.messages.length - 1]
+      });
+    }
+
     res.status(201).json({
       success: true,
-      message: newMessage
+      message: result.newMessage
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -370,7 +431,7 @@ exports.findChatByMechanicId = async (req, res) => {
     if (existingChat) {
       // Chat exists, populate participant details and return it
       await existingChat.populate('participants', 'fullName profileImage location userType');
-      
+
       return res.status(200).json({
         success: true,
         data: existingChat
