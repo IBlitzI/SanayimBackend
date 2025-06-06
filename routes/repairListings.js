@@ -10,7 +10,8 @@ const {
   getUserListings,
   getListingById,
   getMechanicBids,
-  completeListing
+  completeListing,
+  deleteListing
 } = require('../controllers/repairListingController');
 
 // Get all listings with optional status and location filters
@@ -39,5 +40,8 @@ router.post('/mechanics', protect, authorize('vehicle_owner'), getMechanicsByLoc
 
 // Complete a repair listing (only for mechanics with the selected bid)
 router.post('/complete', protect, authorize('mechanic'), completeListing);
+
+// Delete a repair listing (only owner can delete)
+router.delete('/:id', protect, authorize('vehicle_owner'), deleteListing);
 
 module.exports = router;

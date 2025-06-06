@@ -391,3 +391,33 @@ exports.completeListing = async (req, res) => {
     });
   }
 };
+
+exports.deleteListing = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const listing = await RepairListing.findById(id);
+    if (!listing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Repair listing not found'
+      });
+    }
+    // Sadece ilan sahibi silebilir
+    if (listing.ownerId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this listing'
+      });
+    }
+    await listing.deleteOne();
+    res.json({
+      success: true,
+      message: 'Repair listing deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
