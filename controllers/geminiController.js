@@ -4,7 +4,7 @@ const fs = require("fs");
 const GeminiChat = require("../models/GeminiChat");
 
 const upload = multer({ dest: "uploads/" });
-const genAI = new GoogleGenerativeAI("AIzaSyD-AB81nv2IUz1aEtSx-a2NevHzWoUx3vQ");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.chatWithGemini = [
   upload.single("image"),
